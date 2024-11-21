@@ -1,0 +1,163 @@
+#!/usr/bin/env python3
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+def detect_package_manager(project_dir):
+    if os.path.exists(os.path.join(project_dir, 'yarn.lock')):
+        return 'yarn'
+    return 'npm'
+
+def run_command(command, project_dir):
+    try:
+        subprocess.run(command, shell=True, check=True, cwd=project_dir)
+        return True
+    except subprocess.CalledProcessError:
+        print(f"Error running command: {command}")
+        return False
+
+def update_or_create_json(filepath, updates):
+    try:
+        if os.path.exists(filepath):
+            with open(filepath) as f:
+                try:
+                    data = json.load(f)
+                except json.JSONDecodeError:
+                    data = {}
+        else:
+            data = {}
+        
+        def deep_update(d, u):
+            for k, v in u.items():
+                if isinstance(v, dict) and k in d and isinstance(d[k], dict):
+                    deep_update(d[k], v)
+                else:
+                    d[k] = v
+            return d
+        
+        data = deep_update(data, updates)
+        
+        with open(filepath, 'w') as f:
+            json.dump(data, f, indent=2, sort_keys=True)
+    except Exception as e:
+        print(f"Error updating {filepath}: {str(e)}")
+        raise
+
+def create_prettier_config(project_dir):
+    prettier_config = {
+        "semi": False,
+        "tabWidth": 2,
+        "singleQuote": True,
+        "printWidth": 80,
+        "trailingComma": "es5",
+        "vueIndentScriptAndStyle": True
+    }
+    update_or_create_json(os.path.join(project_dir, '.prettierrc'), prettier_config)
+
+def update_package_json(project_dir):
+    package_updates = {
+        "scripts": {
+            "format": "prettier --write \"src/**/*.{js,jsx,ts,tsx,vue,css,scss}\"",
+            "format:check": "prettier --check \"src/**/*.{js,jsx,ts,tsx,vue,css,scss}\"",
+            "prepare": "husky install"
+        },
+        "lint-staged": {
+            "*.{js,jsx,ts,tsx,vue,css,scss}": ["prettier --write"]
+        }
+    }
+    update_or_create_json(os.path.join(project_dir, 'package.json'), package_updates)
+
+def create_prettierignore(project_dir):
+    ignore_content = """dist
+node_modules
+*.log
+coverage
+"""
+    with open(os.path.join(project_dir, '.prettierignore'), 'w') as f:
+        f.write(ignore_content)
+
+def update_eslint_config(project_dir):
+    eslint_updates = {
+        "extends": ["plugin:prettier/recommended"],
+        "plugins": ["prettier"],
+        "rules": {
+            "prettier/prettier": "error",
+            "vue/multi-word-component-names": ["error", {
+                "ignores": ["Game", "Play"]
+            }]
+        }
+    }
+    
+    for config_name in ['.eslintrc.json', '.eslintrc.js', '.eslintrc']:
+        config_file = os.path.join(project_dir, config_name)
+        if os.path.exists(config_file):
+            if config_file.endswith('.js'):
+                print("Please manually add these ESLint configurations:")
+                print(json.dumps(eslint_updates, indent=2))
+                return
+            update_or_create_json(config_file, eslint_updates)
+            return
+    
+    update_or_create_json(os.path.join(project_dir, '.eslintrc.json'), {
+        "env": {
+            "browser": True,
+            "es2021": True
+        },
+        **eslint_updates
+    })
+
+def main():
+    if len(sys.argv) != 2:
+        print("Usage: setup_prettier <project_directory>")
+        sys.exit(1)
+
+    project_dir = os.path.abspath(sys.argv[1])
+    if not os.path.exists(project_dir):
+        print(f"Directory does not exist: {project_dir}")
+        sys.exit(1)
+
+    if not os.path.exists(os.path.join(project_dir, 'package.json')):
+        print(f"No package.json found in {project_dir}. Is this a Node.js project?")
+        sys.exit(1)
+
+    package_manager = detect_package_manager(project_dir)
+    print(f"Detected package manager: {package_manager}")
+
+    dependencies = [
+        "prettier",
+        "@vue/eslint-config-prettier",
+        "eslint-plugin-prettier",
+        "husky",
+        "lint-staged"
+    ]
+
+    install_command = {
+        'npm': f"npm install --save-dev {' '.join(dependencies)}",
+        'yarn': f"yarn add --dev {' '.join(dependencies)}"
+    }[package_manager]
+
+    print("Installing dependencies...")
+    if not run_command(install_command, project_dir):
+        return
+
+    print("Creating/updating configuration files...")
+    create_prettier_config(project_dir)
+    create_prettierignore(project_dir)
+    update_package_json(project_dir)
+    update_eslint_config(project_dir)
+
+    print("Setting up husky...")
+    prepare_command = 'npm run prepare' if package_manager == 'npm' else 'yarn prepare'
+    run_command(prepare_command, project_dir)
+    
+    print("Creating pre-commit hook...")
+    husky_dir = os.path.join(project_dir, '.husky')
+    os.makedirs(husky_dir, exist_ok=True)
+    run_command("npx husky add .husky/pre-commit \"npx lint-staged\"", project_dir)
+
+    print("\nPrettier setup complete! You may need to restart your IDE for changes to take effect.")
+
+if __name__ == "__main__":
+    main()
