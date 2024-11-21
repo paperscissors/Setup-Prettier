@@ -15,7 +15,7 @@ A Python script to automatically configure Prettier, ESLint, and Git pre-commit 
 
 ```bash
 # Clone or download the script
-curl -o ~/bin/setup_prettier.py https://raw.githubusercontent.com/YOUR_REPO/setup_prettier.py
+curl -o ~/bin/setup_prettier.py https://raw.githubusercontent.com/paperscissors/Setup-Prettier/setup_prettier.py
 
 # Make it executable
 chmod +x ~/bin/setup_prettier.py
