@@ -5,6 +5,22 @@ import subprocess
 import sys
 from pathlib import Path
 
+def detect_project_type(project_dir):
+    package_json_path = os.path.join(project_dir, 'package.json')
+    if os.path.exists(package_json_path):
+        with open(package_json_path) as f:
+            try:
+                data = json.load(f)
+                dependencies = {**data.get('dependencies', {}), **data.get('devDependencies', {})}
+                if 'vue' in dependencies:
+                    return 'vue'
+                elif 'react' in dependencies:
+                    return 'react'
+                return 'javascript'
+            except json.JSONDecodeError:
+                return 'javascript'
+    return 'javascript'
+
 def detect_package_manager(project_dir):
     if os.path.exists(os.path.join(project_dir, 'yarn.lock')):
         return 'yarn'
@@ -45,50 +61,70 @@ def update_or_create_json(filepath, updates):
         print(f"Error updating {filepath}: {str(e)}")
         raise
 
-def create_prettier_config(project_dir):
+def create_prettier_config(project_dir, project_type):
     prettier_config = {
         "semi": False,
         "tabWidth": 2,
         "singleQuote": True,
         "printWidth": 80,
-        "trailingComma": "es5",
-        "vueIndentScriptAndStyle": True
+        "trailingComma": "es5"
     }
+    
+    # Add framework-specific settings
+    if project_type == 'vue':
+        prettier_config["vueIndentScriptAndStyle"] = True
+    
     update_or_create_json(os.path.join(project_dir, '.prettierrc'), prettier_config)
 
-def update_package_json(project_dir):
+def update_package_json(project_dir, project_type):
+    file_patterns = "\"**/*.{js,jsx,ts,tsx"
+    if project_type == 'vue':
+        file_patterns += ",vue"
+    file_patterns += ",css,scss}\""
+
     package_updates = {
         "scripts": {
-            "format": "prettier --write \"src/**/*.{js,jsx,ts,tsx,vue,css,scss}\"",
-            "format:check": "prettier --check \"src/**/*.{js,jsx,ts,tsx,vue,css,scss}\"",
+            "format": f"prettier --write {file_patterns}",
+            "format:check": f"prettier --check {file_patterns}",
             "prepare": "husky install"
         },
         "lint-staged": {
-            "*.{js,jsx,ts,tsx,vue,css,scss}": ["prettier --write"]
+            "*.{js,jsx,ts,tsx,css,scss}": ["prettier --write"]
         }
     }
+    
+    # Add framework-specific patterns
+    if project_type == 'vue':
+        package_updates["lint-staged"]["*.vue"] = ["prettier --write"]
+    elif project_type == 'react':
+        package_updates["lint-staged"]["*.{jsx,tsx}"] = ["prettier --write"]
+    
     update_or_create_json(os.path.join(project_dir, 'package.json'), package_updates)
 
 def create_prettierignore(project_dir):
     ignore_content = """dist
+build
 node_modules
-*.log
 coverage
+*.log
 """
     with open(os.path.join(project_dir, '.prettierignore'), 'w') as f:
         f.write(ignore_content)
 
-def update_eslint_config(project_dir):
+def update_eslint_config(project_dir, project_type):
     eslint_updates = {
         "extends": ["plugin:prettier/recommended"],
         "plugins": ["prettier"],
         "rules": {
-            "prettier/prettier": "error",
-            "vue/multi-word-component-names": ["error", {
-                "ignores": ["Game", "Play"]
-            }]
+            "prettier/prettier": "error"
         }
     }
+    
+    # Add framework-specific rules
+    if project_type == 'vue':
+        eslint_updates["rules"]["vue/multi-word-component-names"] = ["error", {
+            "ignores": ["Game", "Play"]
+        }]
     
     for config_name in ['.eslintrc.json', '.eslintrc.js', '.eslintrc']:
         config_file = os.path.join(project_dir, config_name)
@@ -122,16 +158,18 @@ def main():
         print(f"No package.json found in {project_dir}. Is this a Node.js project?")
         sys.exit(1)
 
+    project_type = detect_project_type(project_dir)
     package_manager = detect_package_manager(project_dir)
+    print(f"Detected project type: {project_type}")
     print(f"Detected package manager: {package_manager}")
 
-    dependencies = [
-        "prettier",
-        "@vue/eslint-config-prettier",
-        "eslint-plugin-prettier",
-        "husky",
-        "lint-staged"
-    ]
+    dependencies = ["prettier", "eslint-plugin-prettier", "husky", "lint-staged"]
+    
+    # Add framework-specific dependencies
+    if project_type == 'vue':
+        dependencies.append("@vue/eslint-config-prettier")
+    elif project_type == 'react':
+        dependencies.append("eslint-config-prettier")
 
     install_command = {
         'npm': f"npm install --save-dev {' '.join(dependencies)}",
@@ -143,10 +181,10 @@ def main():
         return
 
     print("Creating/updating configuration files...")
-    create_prettier_config(project_dir)
+    create_prettier_config(project_dir, project_type)
     create_prettierignore(project_dir)
-    update_package_json(project_dir)
-    update_eslint_config(project_dir)
+    update_package_json(project_dir, project_type)
+    update_eslint_config(project_dir, project_type)
 
     print("Setting up husky...")
     prepare_command = 'npm run prepare' if package_manager == 'npm' else 'yarn prepare'
